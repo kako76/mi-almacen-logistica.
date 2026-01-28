@@ -1,22 +1,20 @@
 import streamlit as st
-import pandas as pd
+import pd
 import sqlite3
 from datetime import datetime
 import io
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Altri Telecom - Logística", layout="wide")
+# --- CONFIGURACIÓN ---
+st.set_page_config(page_title="Altri Telecom - Logística Pro", layout="wide")
 
 # --- BASE DE DATOS ---
 def init_db():
-    conn = sqlite3.connect('altri_v6_final.db', check_same_thread=False)
+    conn = sqlite3.connect('altri_v7_stock.db', check_same_thread=False)
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS usuarios 
-                 (user TEXT PRIMARY KEY, nombre TEXT, clave TEXT, perfil TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS stock 
-                 (sn TEXT PRIMARY KEY, modelo TEXT, marca TEXT, estado TEXT, poseedor TEXT, fecha_actualizacion TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS movimientos 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, sn TEXT, tipo TEXT, origen TEXT, destino TEXT, fecha TEXT, usuario_accion TEXT)''')
+    c.execute('CREATE TABLE IF NOT EXISTS usuarios (user TEXT PRIMARY KEY, nombre TEXT, clave TEXT, perfil TEXT)')
+    c.execute('CREATE TABLE IF NOT EXISTS stock (sn TEXT PRIMARY KEY, modelo TEXT, familia TEXT, marca TEXT, estado TEXT, poseedor TEXT, fecha TEXT)')
+    c.execute('CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY AUTOINCREMENT, sn TEXT, tipo TEXT, origen TEXT, destino TEXT, fecha TEXT, usuario_accion TEXT)')
+    
     c.execute("SELECT * FROM usuarios WHERE user='admin'")
     if not c.fetchone():
         c.execute("INSERT INTO usuarios VALUES ('admin', 'Administrador', '1234', 'admin')")
@@ -25,6 +23,20 @@ def init_db():
 
 conn = init_db()
 c = conn.cursor()
+
+# --- CATÁLOGO DE MATERIALES ---
+CATALOGO = {
+    "ORANGE": {
+        "Routers/ONT": ["ZTE LIVEBOX 7", "ARCADYAN LIVEBOX 6", "LIVEBOX INFINITY", "Nokia G-010G-P"],
+        "TV": ["STB Android TV 4K", "Jade"],
+        "Cableado/Accesorios": ["Acometida Interior 20m", "Acometida Interior 40m", "Acometida Exterior 80m", "PTR Óptica", "Roseta"]
+    },
+    "MASMOVIL": {
+        "Routers/ONT": ["ZTE H3640 Wifi 6", "Sagemcom 5670", "ONT Huawei"],
+        "TV": ["Agile TV Box"],
+        "Cableado/Accesorios": ["Acometida Prodigy 80m", "Interior MMV 20m", "Filtro 4G", "Latiguillo Fibra"]
+    }
+}
 
 def registrar_movimiento(sn, tipo, origen, destino, usuario):
     fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -37,152 +49,104 @@ if 'auth' not in st.session_state:
     st.session_state.auth = False
 
 if not st.session_state.auth:
-    st.title("🔐 Acceso Altri Telecom")
-    u_input = st.text_input("Usuario")
-    p_input = st.text_input("Contraseña", type="password")
+    st.title("🔐 Altri Telecom - Acceso")
+    u = st.text_input("Usuario")
+    p = st.text_input("Contraseña", type="password")
     if st.button("Entrar"):
-        c.execute("SELECT nombre, perfil FROM usuarios WHERE user=? AND clave=?", (u_input, p_input))
+        c.execute("SELECT nombre, perfil FROM usuarios WHERE user=? AND clave=?", (u, p))
         res = c.fetchone()
         if res:
-            st.session_state.auth = True
-            st.session_state.usuario_id = u_input
-            st.session_state.nombre = res[0]
-            st.session_state.perfil = res[1]
+            st.session_state.auth, st.session_state.usuario_id, st.session_state.nombre, st.session_state.perfil = True, u, res[0], res[1]
             st.rerun()
-        else:
-            st.error("Credenciales incorrectas")
+        else: st.error("Error de acceso")
     st.stop()
 
 # --- INTERFAZ ---
 st.sidebar.title(f"👤 {st.session_state.nombre}")
 if st.session_state.perfil == 'admin':
-    menu = st.sidebar.radio("Menú Admin", ["📊 Stock Global", "🔍 Rastreador S/N", "📥 Entrada Almacén", "🚚 Asignación", "👥 Gestión Técnicos", "📑 Historial"])
+    menu = st.sidebar.radio("Gestión", ["📊 Stock Global", "📥 Carga Inicial (25uds)", "🚚 Asignación/Albarán", "👥 Técnicos", "📑 Historial"])
 else:
-    menu = st.sidebar.radio("Menú Técnico", ["🎒 Mi Mochila", "✅ Instalar", "⚠️ Defectuoso"])
+    menu = st.sidebar.radio("Técnico", ["🎒 Mi Mochila", "✅ Instalar", "⚠️ Defectuoso"])
 
-# --- FUNCIONES ADMIN ---
+# --- LÓGICA ADMIN ---
 if menu == "📊 Stock Global":
-    st.header("Inventario Completo")
-    df = pd.read_sql_query("SELECT * FROM stock", conn)
+    st.header("Inventario de Materiales")
+    marca_f = st.selectbox("Filtrar Marca", ["TODAS", "ORANGE", "MASMOVIL"])
+    query = "SELECT * FROM stock" if marca_f == "TODAS" else f"SELECT * FROM stock WHERE marca='{marca_f}'"
+    df = pd.read_sql_query(query, conn)
     st.dataframe(df, use_container_width=True)
 
-elif menu == "🔍 Rastreador S/N":
-    st.header("Buscador de Equipos")
-    busqueda = st.text_input("Introduce S/N")
-    if busqueda:
-        c.execute("SELECT * FROM stock WHERE sn=?", (busqueda,))
-        item = c.fetchone()
-        if item:
-            st.write(f"Estado: {item[3]} | Poseedor: {item[4]}")
-            hist = pd.read_sql_query(f"SELECT * FROM movimientos WHERE sn='{busqueda}' ORDER BY id DESC", conn)
-            st.table(hist)
-        else:
-            st.error("No encontrado")
+elif menu == "📥 Carga Inicial (25uds)":
+    st.header("Carga Masiva de Materiales")
+    st.info("Esta opción añadirá automáticamente 25 unidades de cada producto del catálogo con S/N genéricos.")
+    if st.button("🚀 Cargar todo el Stock"):
+        for marca, familias in CATALOGO.items():
+            for familia, productos in familias.items():
+                for producto in productos:
+                    for i in range(1, 26):
+                        sn_gen = f"{producto[:3]}-{marca[:2]}-{1000+i}"
+                        c.execute("INSERT OR IGNORE INTO stock VALUES (?,?,?,?,?,?,?)",
+                                 (sn_gen, producto, familia, marca, "Almacén", "ALMACEN", datetime.now().strftime("%d/%m/%Y")))
+        conn.commit()
+        st.success("✅ Se han añadido 25 unidades de CADA material correctamente.")
 
-elif menu == "📥 Entrada Almacén":
-    st.header("Entrada de Material")
-    marca = st.selectbox("Operadora", ["ORANGE", "MASMOVIL"])
-    mod = st.text_input("Modelo")
-    sns = st.text_area("S/N (uno por línea)")
-    if st.button("Cargar"):
-        if sns.strip() and mod:
-            for s in sns.split('\n'):
-                if s.strip():
-                    c.execute("INSERT OR REPLACE INTO stock VALUES (?,?,?,?,?,?)", 
-                             (s.strip(), mod, marca, "Almacén", "ALMACEN", datetime.now().strftime("%d/%m/%Y")))
-                    registrar_movimiento(s.strip(), "Entrada", "Proveedor", "ALMACEN", st.session_state.nombre)
-            st.success("Carga finalizada correctamente")
-        else:
-            st.warning("Falta modelo o S/N")
-
-elif menu == "🚚 Asignación":
-    st.header("Asignar a Técnico")
+elif menu == "🚚 Asignación/Albarán":
+    st.header("Entregar Material")
     c.execute("SELECT nombre FROM usuarios WHERE perfil='tecnico'")
     tecs = [t[0] for t in c.fetchall()]
     if tecs:
-        t_dest = st.selectbox("Técnico", tecs)
-        df_disp = pd.read_sql_query("SELECT sn FROM stock WHERE estado='Almacén'", conn)
-        sel = st.multiselect("Equipos", df_disp['sn'].tolist())
-        if st.button("Asignar"):
-            if sel:
-                for s in sel:
-                    c.execute("UPDATE stock SET estado='En Mochila', poseedor=? WHERE sn=?", (t_dest, s))
-                    registrar_movimiento(s, "Asignación", "ALMACEN", t_dest, st.session_state.nombre)
-                st.success(f"Equipos asignados a {t_dest}")
-            else:
-                st.warning("Selecciona al menos un equipo")
-    else:
-        st.warning("Crea técnicos primero en Gestión Técnicos")
+        t_sel = st.selectbox("Técnico", tecs)
+        m_sel = st.selectbox("Marca", ["ORANGE", "MASMOVIL"])
+        df_d = pd.read_sql_query(f"SELECT sn, modelo FROM stock WHERE estado='Almacén' AND marca='{m_sel}'", conn)
+        items = st.multiselect("Seleccionar S/N", df_d['sn'].tolist())
+        if st.button("Firmar Albarán"):
+            for s in items:
+                c.execute("UPDATE stock SET estado='En Mochila', poseedor=? WHERE sn=?", (t_sel, s))
+                registrar_movimiento(s, "Asignación", "ALMACEN", t_sel, st.session_state.nombre)
+            st.success("Material asignado. Pulsa Ctrl+P para imprimir el albarán.")
+            st.table(df_d[df_d['sn'].isin(items)])
+    else: st.warning("Crea técnicos primero.")
 
-elif menu == "👥 Gestión Técnicos":
-    st.header("Gestión de Personal")
-    with st.expander("Añadir Nuevo"):
-        nu = st.text_input("Usuario Login")
-        nn = st.text_input("Nombre Real")
-        nc = st.text_input("Contraseña")
-        if st.button("Crear"):
-            if nu and nn and nc:
-                c.execute("INSERT OR IGNORE INTO usuarios VALUES (?,?,?,'tecnico')", (nu, nn, nc))
-                conn.commit()
-                st.success("Técnico creado con éxito")
-                st.rerun()
-            else:
-                st.error("Todos los campos son obligatorios")
-    df_u = pd.read_sql_query("SELECT user, nombre FROM usuarios WHERE perfil='tecnico'", conn)
-    st.dataframe(df_u)
-    borrar = st.text_input("Login para eliminar")
-    if st.button("Borrar"):
-        if borrar:
-            c.execute("DELETE FROM usuarios WHERE user=?", (borrar,))
+elif menu == "👥 Técnicos":
+    st.header("Gestión de Usuarios")
+    with st.expander("Añadir"):
+        u_l, u_n, u_c = st.text_input("Login"), st.text_input("Nombre"), st.text_input("Pass")
+        if st.button("Guardar"):
+            c.execute("INSERT INTO usuarios VALUES (?,?,?,'tecnico')", (u_l, u_n, u_c))
             conn.commit()
-            st.success("Usuario eliminado")
             st.rerun()
+    st.dataframe(pd.read_sql_query("SELECT user, nombre FROM usuarios WHERE perfil='tecnico'", conn))
 
 elif menu == "📑 Historial":
-    st.header("Auditoría")
+    st.header("Movimientos")
     df_h = pd.read_sql_query("SELECT * FROM movimientos ORDER BY id DESC", conn)
     st.dataframe(df_h)
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df_h.to_excel(writer, index=False)
-    st.download_button("Descargar Excel", buffer.getvalue(), "historial_altri.xlsx")
+    st.download_button("📥 Descargar Excel", buffer.getvalue(), "logistica.xlsx")
 
-# --- FUNCIONES TÉCNICO ---
+# --- LÓGICA TÉCNICO ---
 elif menu == "🎒 Mi Mochila":
     st.header("Mi Material")
-    df_m = pd.read_sql_query(f"SELECT sn, modelo FROM stock WHERE poseedor='{st.session_state.nombre}' AND estado='En Mochila'", conn)
+    df_m = pd.read_sql_query(f"SELECT sn, modelo, familia FROM stock WHERE poseedor='{st.session_state.nombre}' AND estado='En Mochila'", conn)
     st.dataframe(df_m)
 
 elif menu == "✅ Instalar":
-    st.header("Instalar")
+    st.header("Instalación de Equipo")
     c.execute("SELECT sn FROM stock WHERE poseedor=? AND estado='En Mochila'", (st.session_state.nombre,))
     mis_s = [r[0] for r in c.fetchall()]
     if mis_s:
-        s_inst = st.selectbox("S/N", mis_s)
-        cli = st.text_input("Cliente")
-        if st.button("Confirmar Instalación"):
+        s_i = st.selectbox("S/N", mis_s)
+        cli = st.text_input("ID Cliente / Orden")
+        if st.button("Finalizar Instalación"):
             if cli:
-                c.execute("UPDATE stock SET estado='INSTALADO', poseedor=? WHERE sn=?", (cli, s_inst))
-                registrar_movimiento(s_inst, "Instalación", st.session_state.nombre, cli, st.session_state.nombre)
-                st.success("Equipo instalado")
+                c.execute("UPDATE stock SET estado='INSTALADO', poseedor=? WHERE sn=?", (cli, s_i))
+                registrar_movimiento(s_i, "Instalación", st.session_state.nombre, cli, st.session_state.nombre)
+                st.success("Instalado correctamente")
                 st.rerun()
-            else:
-                st.warning("Introduce el nombre del cliente")
-    else:
-        st.info("No tienes material asignado")
+    else: st.info("No tienes material.")
 
-elif menu == "⚠️ Defectuoso":
-    st.header("Reportar Avería")
-    c.execute("SELECT sn FROM stock WHERE poseedor=? AND estado='En Mochila'", (st.session_state.nombre,))
-    mis_d = [r[0] for r in c.fetchall()]
-    if mis_d:
-        s_def = st.selectbox("S/N", mis_d)
-        if st.button("Enviar a Taller"):
-            c.execute("UPDATE stock SET estado='DEFECTUOSO', poseedor='TALLER' WHERE sn=?", (s_def,))
-            registrar_movimiento(s_def, "Defectuoso", st.session_state.nombre, "TALLER", st.session_state.nombre)
-            st.warning("Reporte enviado")
-            st.rerun()
-
-if st.sidebar.button("Salir"):
+if st.sidebar.button("Cerrar Sesión"):
     st.session_state.auth = False
     st.rerun()
