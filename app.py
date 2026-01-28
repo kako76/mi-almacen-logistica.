@@ -1,5 +1,5 @@
 import streamlit as st
-import pd
+import pandas as pd
 import sqlite3
 from datetime import datetime
 import io
@@ -9,7 +9,7 @@ st.set_page_config(page_title="Altri Telecom - Logística Pro", layout="wide")
 
 # --- BASE DE DATOS ---
 def init_db():
-    conn = sqlite3.connect('altri_v7_stock.db', check_same_thread=False)
+    conn = sqlite3.connect('altri_v8_final.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS usuarios (user TEXT PRIMARY KEY, nombre TEXT, clave TEXT, perfil TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS stock (sn TEXT PRIMARY KEY, modelo TEXT, familia TEXT, marca TEXT, estado TEXT, poseedor TEXT, fecha TEXT)')
@@ -24,17 +24,19 @@ def init_db():
 conn = init_db()
 c = conn.cursor()
 
-# --- CATÁLOGO DE MATERIALES ---
+# --- CATÁLOGO COMPLETO DE MATERIALES ---
 CATALOGO = {
     "ORANGE": {
-        "Routers/ONT": ["ZTE LIVEBOX 7", "ARCADYAN LIVEBOX 6", "LIVEBOX INFINITY", "Nokia G-010G-P"],
-        "TV": ["STB Android TV 4K", "Jade"],
-        "Cableado/Accesorios": ["Acometida Interior 20m", "Acometida Interior 40m", "Acometida Exterior 80m", "PTR Óptica", "Roseta"]
+        "Routers/ONT": ["ZTE LIVEBOX 7", "ARCADYAN LIVEBOX 6", "LIVEBOX INFINITY", "Nokia G-010G-P", "ONT Huawei HG8010H"],
+        "TV": ["STB Android TV 4K", "Jade", "Decodificador Humax"],
+        "Acometida/Cable": ["Acometida Exterior 80m", "Acometida Exterior 100m", "Acometida Interior 20m", "Acometida Interior 40m", "Latiguillo Fibra 2m"],
+        "Varios": ["PTR Óptica", "Roseta", "Filtro 4G"]
     },
     "MASMOVIL": {
-        "Routers/ONT": ["ZTE H3640 Wifi 6", "Sagemcom 5670", "ONT Huawei"],
-        "TV": ["Agile TV Box"],
-        "Cableado/Accesorios": ["Acometida Prodigy 80m", "Interior MMV 20m", "Filtro 4G", "Latiguillo Fibra"]
+        "Routers/ONT": ["ZTE H3640 Wifi 6", "Sagemcom 5670", "ONT Huawei", "Router ZTE F680"],
+        "TV": ["Agile TV Box", "Decodificador ZTE"],
+        "Acometida/Cable": ["Acometida Prodigy 80m", "Interior MMV 20m", "Acometida Exterior 100m MM"],
+        "Varios": ["Filtro 4G MM", "PTR Óptica MM", "Latiguillo Fibra MM"]
     }
 }
 
@@ -49,7 +51,7 @@ if 'auth' not in st.session_state:
     st.session_state.auth = False
 
 if not st.session_state.auth:
-    st.title("🔐 Altri Telecom - Acceso")
+    st.title("🔐 Altri Telecom - Logística")
     u = st.text_input("Usuario")
     p = st.text_input("Contraseña", type="password")
     if st.button("Entrar"):
@@ -58,94 +60,133 @@ if not st.session_state.auth:
         if res:
             st.session_state.auth, st.session_state.usuario_id, st.session_state.nombre, st.session_state.perfil = True, u, res[0], res[1]
             st.rerun()
-        else: st.error("Error de acceso")
+        else: st.error("Acceso denegado")
     st.stop()
 
 # --- INTERFAZ ---
 st.sidebar.title(f"👤 {st.session_state.nombre}")
 if st.session_state.perfil == 'admin':
-    menu = st.sidebar.radio("Gestión", ["📊 Stock Global", "📥 Carga Inicial (25uds)", "🚚 Asignación/Albarán", "👥 Técnicos", "📑 Historial"])
+    menu = st.sidebar.radio("Gestión Admin", ["📊 Stock Global", "📥 Carga Inicial (25uds)", "🚚 Asignación", "👥 Gestión Técnicos", "📑 Historial"])
 else:
-    menu = st.sidebar.radio("Técnico", ["🎒 Mi Mochila", "✅ Instalar", "⚠️ Defectuoso"])
+    menu = st.sidebar.radio("Menú Técnico", ["🎒 Mi Mochila", "✅ Instalar Equipo", "⚠️ Reportar Defectuoso"])
 
 # --- LÓGICA ADMIN ---
 if menu == "📊 Stock Global":
-    st.header("Inventario de Materiales")
-    marca_f = st.selectbox("Filtrar Marca", ["TODAS", "ORANGE", "MASMOVIL"])
-    query = "SELECT * FROM stock" if marca_f == "TODAS" else f"SELECT * FROM stock WHERE marca='{marca_f}'"
+    st.header("Inventario Actual")
+    col1, col2 = st.columns(2)
+    with col1:
+        marca_f = st.selectbox("Operadora", ["TODAS", "ORANGE", "MASMOVIL"])
+    with col2:
+        estado_f = st.selectbox("Estado", ["TODOS", "Almacén", "En Mochila", "INSTALADO", "DEFECTUOSO"])
+    
+    query = "SELECT * FROM stock WHERE 1=1"
+    if marca_f != "TODAS": query += f" AND marca='{marca_f}'"
+    if estado_f != "TODOS": query += f" AND estado='{estado_f}'"
+    
     df = pd.read_sql_query(query, conn)
     st.dataframe(df, use_container_width=True)
 
 elif menu == "📥 Carga Inicial (25uds)":
-    st.header("Carga Masiva de Materiales")
-    st.info("Esta opción añadirá automáticamente 25 unidades de cada producto del catálogo con S/N genéricos.")
-    if st.button("🚀 Cargar todo el Stock"):
-        for marca, familias in CATALOGO.items():
-            for familia, productos in familias.items():
-                for producto in productos:
-                    for i in range(1, 26):
-                        sn_gen = f"{producto[:3]}-{marca[:2]}-{1000+i}"
-                        c.execute("INSERT OR IGNORE INTO stock VALUES (?,?,?,?,?,?,?)",
-                                 (sn_gen, producto, familia, marca, "Almacén", "ALMACEN", datetime.now().strftime("%d/%m/%Y")))
-        conn.commit()
-        st.success("✅ Se han añadido 25 unidades de CADA material correctamente.")
+    st.header("Carga Automática de Catálogo")
+    st.write("Esta función añadirá 25 unidades de cada producto listado en el catálogo con S/N automáticos.")
+    if st.button("🚀 Cargar todo el Stock (25 uds/modelo)"):
+        with st.spinner("Cargando materiales..."):
+            for marca, familias in CATALOGO.items():
+                for familia, productos in familias.items():
+                    for producto in productos:
+                        for i in range(1, 26):
+                            sn_gen = f"{marca[:2]}-{producto[:3].replace(' ', '')}-{2000+i}"
+                            c.execute("INSERT OR IGNORE INTO stock VALUES (?,?,?,?,?,?,?)",
+                                     (sn_gen, producto, familia, marca, "Almacén", "ALMACEN", datetime.now().strftime("%d/%m/%Y")))
+            conn.commit()
+            st.success("✅ Stock cargado: 25 unidades de cada material de Orange y MásMóvil.")
 
-elif menu == "🚚 Asignación/Albarán":
-    st.header("Entregar Material")
+elif menu == "🚚 Asignación":
+    st.header("Entregar Material a Técnico")
     c.execute("SELECT nombre FROM usuarios WHERE perfil='tecnico'")
     tecs = [t[0] for t in c.fetchall()]
     if tecs:
-        t_sel = st.selectbox("Técnico", tecs)
-        m_sel = st.selectbox("Marca", ["ORANGE", "MASMOVIL"])
+        t_sel = st.selectbox("Selecciona Técnico", tecs)
+        m_sel = st.selectbox("Operadora", ["ORANGE", "MASMOVIL"])
         df_d = pd.read_sql_query(f"SELECT sn, modelo FROM stock WHERE estado='Almacén' AND marca='{m_sel}'", conn)
-        items = st.multiselect("Seleccionar S/N", df_d['sn'].tolist())
-        if st.button("Firmar Albarán"):
-            for s in items:
-                c.execute("UPDATE stock SET estado='En Mochila', poseedor=? WHERE sn=?", (t_sel, s))
-                registrar_movimiento(s, "Asignación", "ALMACEN", t_sel, st.session_state.nombre)
-            st.success("Material asignado. Pulsa Ctrl+P para imprimir el albarán.")
-            st.table(df_d[df_d['sn'].isin(items)])
-    else: st.warning("Crea técnicos primero.")
+        items = st.multiselect("Equipos para entregar", df_d['sn'].tolist())
+        if st.button("Generar Albarán y Asignar"):
+            if items:
+                for s in items:
+                    c.execute("UPDATE stock SET estado='En Mochila', poseedor=? WHERE sn=?", (t_sel, s))
+                    registrar_movimiento(s, "Asignación", "ALMACEN", t_sel, st.session_state.nombre)
+                st.success(f"Asignación completada para {t_sel}")
+                st.subheader("📄 Albarán de Entrega")
+                st.table(df_d[df_d['sn'].isin(items)])
+            else: st.warning("Selecciona al menos un S/N")
+    else: st.warning("Crea técnicos primero en la sección de Gestión Técnicos.")
 
-elif menu == "👥 Técnicos":
+elif menu == "👥 Gestión Técnicos":
     st.header("Gestión de Usuarios")
-    with st.expander("Añadir"):
-        u_l, u_n, u_c = st.text_input("Login"), st.text_input("Nombre"), st.text_input("Pass")
-        if st.button("Guardar"):
-            c.execute("INSERT INTO usuarios VALUES (?,?,?,'tecnico')", (u_l, u_n, u_c))
+    with st.expander("➕ Añadir Nuevo Técnico"):
+        u_l = st.text_input("Usuario (Login)")
+        u_n = st.text_input("Nombre Completo")
+        u_c = st.text_input("Contraseña", type="password")
+        if st.button("Crear Usuario"):
+            if u_l and u_n and u_c:
+                c.execute("INSERT OR IGNORE INTO usuarios VALUES (?,?,?,'tecnico')", (u_l, u_n, u_c))
+                conn.commit()
+                st.success(f"Técnico {u_n} creado")
+                st.rerun()
+    
+    st.subheader("Personal Registrado")
+    df_u = pd.read_sql_query("SELECT user as Login, nombre as Nombre FROM usuarios WHERE perfil='tecnico'", conn)
+    st.dataframe(df_u)
+    
+    borrar = st.text_input("Login para eliminar")
+    if st.button("Eliminar"):
+        if borrar and borrar != 'admin':
+            c.execute("DELETE FROM usuarios WHERE user=?", (borrar,))
             conn.commit()
             st.rerun()
-    st.dataframe(pd.read_sql_query("SELECT user, nombre FROM usuarios WHERE perfil='tecnico'", conn))
 
 elif menu == "📑 Historial":
-    st.header("Movimientos")
+    st.header("Historial de Movimientos")
     df_h = pd.read_sql_query("SELECT * FROM movimientos ORDER BY id DESC", conn)
     st.dataframe(df_h)
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df_h.to_excel(writer, index=False)
-    st.download_button("📥 Descargar Excel", buffer.getvalue(), "logistica.xlsx")
+    st.download_button("📥 Descargar Excel", buffer.getvalue(), "historial_logistica.xlsx")
 
 # --- LÓGICA TÉCNICO ---
 elif menu == "🎒 Mi Mochila":
-    st.header("Mi Material")
+    st.header(f"Material de {st.session_state.nombre}")
     df_m = pd.read_sql_query(f"SELECT sn, modelo, familia FROM stock WHERE poseedor='{st.session_state.nombre}' AND estado='En Mochila'", conn)
     st.dataframe(df_m)
 
-elif menu == "✅ Instalar":
-    st.header("Instalación de Equipo")
+elif menu == "✅ Instalar Equipo":
+    st.header("Registrar Instalación")
     c.execute("SELECT sn FROM stock WHERE poseedor=? AND estado='En Mochila'", (st.session_state.nombre,))
     mis_s = [r[0] for r in c.fetchall()]
     if mis_s:
-        s_i = st.selectbox("S/N", mis_s)
-        cli = st.text_input("ID Cliente / Orden")
+        s_i = st.selectbox("S/N de tu mochila", mis_s)
+        cli = st.text_input("Nombre Cliente / Número de Orden")
         if st.button("Finalizar Instalación"):
             if cli:
                 c.execute("UPDATE stock SET estado='INSTALADO', poseedor=? WHERE sn=?", (cli, s_i))
                 registrar_movimiento(s_i, "Instalación", st.session_state.nombre, cli, st.session_state.nombre)
-                st.success("Instalado correctamente")
+                st.success("¡Instalación registrada!")
                 st.rerun()
-    else: st.info("No tienes material.")
+            else: st.warning("Indica el cliente.")
+    else: st.info("No tienes material asignado en tu mochila.")
+
+elif menu == "⚠️ Reportar Defectuoso":
+    st.header("Reportar Avería")
+    c.execute("SELECT sn FROM stock WHERE poseedor=? AND estado='En Mochila'", (st.session_state.nombre,))
+    mis_d = [r[0] for r in c.fetchall()]
+    if mis_d:
+        s_d = st.selectbox("Equipo Averiado", mis_d)
+        if st.button("Enviar a Taller"):
+            c.execute("UPDATE stock SET estado='DEFECTUOSO', poseedor='TALLER' WHERE sn=?", (s_d,))
+            registrar_movimiento(s_d, "Defectuoso", st.session_state.nombre, "TALLER", st.session_state.nombre)
+            st.warning("Equipo reportado como defectuoso.")
+            st.rerun()
 
 if st.sidebar.button("Cerrar Sesión"):
     st.session_state.auth = False
