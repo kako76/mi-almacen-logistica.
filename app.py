@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from datetime import datetime
@@ -8,13 +7,20 @@ import io
 
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Altri ERP", layout="wide", page_icon="🏢")
-conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- CARGA DE DATOS ---
-def load_all_data():
-    users = conn.read(worksheet="usuarios")
-    inv = conn.read(worksheet="inventario")
-    return users, inv
+# --- CONEXIÓN DIRECTA (TÉCNICA DE EXPORTACIÓN CSV) ---
+# Usamos el ID de tu hoja para construir URLs de descarga directa
+SHEET_ID = "1CQXP7bX81ysb9fkr8pEqlLSms5wNAMI-_ojqLIzoSUw"
+
+def load_data(sheet_name):
+    """Carga una pestaña específica usando la exportación a CSV de Google"""
+    url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+    try:
+        # Forzamos la lectura ignorando errores de líneas malas
+        return pd.read_csv(url, on_bad_lines='skip')
+    except Exception as e:
+        # Si falla, devolvemos un DataFrame vacío para que la app no se rompa
+        return pd.DataFrame()
 
 # --- FUNCIONES DE ALBARÁN ---
 def generar_pdf(tecnico, items):
@@ -39,14 +45,26 @@ if 'user' not in st.session_state:
         u = st.text_input("Usuario")
         p = st.text_input("Clave", type="password")
         if st.form_submit_button("Entrar"):
-            df_u, _ = load_all_data()
-            user_row = df_u[(df_u['user'] == u) & (df_u['clave'] == str(p))]
-            if not user_row.empty:
-                st.session_state.user = u
-                st.session_state.rol = user_row.iloc[0]['rol']
-                st.rerun()
+            # Cargamos usuarios directamente
+            df_u = load_data("usuarios")
+            
+            if not df_u.empty:
+                # Normalizamos columnas (minusculas y sin espacios)
+                df_u.columns = [c.lower().strip() for c in df_u.columns]
+                
+                # Buscamos coincidencia (convertimos todo a string para evitar errores de números)
+                user_row = df_u[(df_u['user'].astype(str) == str(u)) & 
+                                (df_u['clave'].astype(str) == str(p))]
+                
+                if not user_row.empty:
+                    st.session_state.user = u
+                    # Guardamos el rol (si existe la columna, si no, por defecto admin)
+                    st.session_state.rol = user_row.iloc[0]['rol'] if 'rol' in user_row.columns else 'admin'
+                    st.rerun()
+                else:
+                    st.error("❌ Usuario o clave incorrectos")
             else:
-                st.error("Error de acceso")
+                st.error("⚠️ No se pudo conectar con el Excel. Revisa los permisos.")
     st.stop()
 
 # --- INTERFAZ SEGÚN ROL ---
@@ -60,16 +78,24 @@ st.sidebar.info(f"Rol: {rol.upper()}")
 if rol in ['admin', 'almacen']:
     tabs = st.tabs(["📊 Administración", "📦 Almacén", "👨‍🔧 Técnicos", "👥 Usuarios", "🟠 Orange", "🟡 MásMóvil"])
     
+    # Cargar inventario una sola vez
+    df_inv = load_data("inventario")
+    df_inv.columns = [c.lower().strip() for c in df_inv.columns]
+
     # 1. ADMINISTRACIÓN
     with tabs[0]:
         st.header("Rastreo Global de Material")
         sn_search = st.text_input("🔍 Buscar Número de Serie (SN)")
-        _, inv = load_all_data()
-        if sn_search:
-            res = inv[inv['sn'].str.contains(sn_search, na=False)]
-            st.dataframe(res)
+        
+        if not df_inv.empty:
+            if sn_search:
+                # Filtro insensible a mayúsculas/minúsculas
+                res = df_inv[df_inv['sn'].astype(str).str.contains(sn_search, case=False, na=False)]
+                st.dataframe(res, use_container_width=True)
+            else:
+                st.dataframe(df_inv, use_container_width=True)
         else:
-            st.dataframe(inv)
+            st.warning("La pestaña 'inventario' está vacía o no existe en el Excel.")
 
     # 2. ALMACÉN
     with tabs[1]:
@@ -79,62 +105,51 @@ if rol in ['admin', 'almacen']:
             st.subheader("Entrada de Material")
             new_sn = st.text_input("Nuevo SN")
             new_mod = st.selectbox("Modelo", ["Livebox 6", "Livebox 7", "Infinity", "ONT ZTE"])
-            new_brand = st.selectbox("Marca", ["Orange", "MasMovil"])
-            if st.button("Registrar en Almacén"):
-                st.success(f"Equipo {new_sn} registrado")
+            if st.button("Registrar"):
+                st.info("Para guardar datos reales, necesitamos configurar la API de escritura (Google Cloud Console).")
         
         with col_out:
             st.subheader("Traspaso a Técnico")
-            df_u, _ = load_all_data()
-            tecs = df_u[df_u['rol'] == 'tecnico']['user'].tolist()
-            dest = st.selectbox("Seleccionar Técnico", tecs)
-            sn_out = st.text_input("SN a entregar")
-            if st.button("Generar Albarán y Traspasar"):
-                pdf = generar_pdf(dest, [{"sn": sn_out, "modelo": "Equipo Altri"}])
-                st.download_button("Descargar Albarán", pdf, "albaran.pdf")
+            df_u = load_data("usuarios")
+            if not df_u.empty:
+                df_u.columns = [c.lower().strip() for c in df_u.columns]
+                tecs = df_u[df_u['rol'] == 'tecnico']['user'].tolist() if 'rol' in df_u.columns else []
+                dest = st.selectbox("Seleccionar Técnico", tecs)
+                sn_out = st.text_input("SN a entregar")
+                if st.button("Generar Albarán"):
+                    pdf = generar_pdf(dest, [{"sn": sn_out, "modelo": "Generico"}])
+                    st.download_button("Descargar PDF", pdf, f"albaran_{sn_out}.pdf")
 
     # 3. TÉCNICOS (VISTA ADMIN)
     with tabs[2]:
-        st.header("Estado de la Red de Técnicos")
-        _, inv = load_all_data()
-        st.write("Material en posesión de técnicos:")
-        st.dataframe(inv[inv['ubicacion'] != 'Almacén'])
+        st.header("Material en poder de técnicos")
+        if not df_inv.empty and 'ubicacion' in df_inv.columns:
+            st.dataframe(df_inv[df_inv['ubicacion'] != 'Almacén'])
 
     # 4. USUARIOS
     with tabs[3]:
-        st.header("Gestión de Personal")
-        df_u, _ = load_all_data()
-        st.table(df_u[['user', 'rol']])
+        df_u = load_data("usuarios")
+        st.dataframe(df_u)
 
-    # 5 y 6. MARCAS
     with tabs[4]: st.header("Stock Orange")
     with tabs[5]: st.header("Stock MásMóvil")
 
 # --- VISTA TÉCNICO ---
 elif rol == 'tecnico':
-    t_tabs = st.tabs(["📦 Mi Material", "🔄 Traspaso entre Técnicos", "✅ Instalado"])
+    t_tabs = st.tabs(["📦 Mi Material", "🔄 Traspaso", "✅ Instalaciones"])
     
+    df_inv = load_data("inventario")
+    if not df_inv.empty:
+        df_inv.columns = [c.lower().strip() for c in df_inv.columns]
+        
     with t_tabs[0]:
-        st.header(f"Equipos asignados a {user_act}")
-        _, inv = load_all_data()
-        mis_equipos = inv[inv['ubicacion'] == user_act]
-        st.dataframe(mis_equipos)
-
-    with t_tabs[1]:
-        st.header("Enviar material a otro compañero")
-        df_u, _ = load_all_data()
-        otros_tecs = df_u[(df_u['rol'] == 'tecnico') & (df_u['user'] != user_act)]['user'].tolist()
-        compañero = st.selectbox("Compañero", otros_tecs)
-        sn_trap = st.text_input("SN a traspasar")
-        if st.button("Confirmar Traspaso"):
-            st.warning(f"Traspasando {sn_trap} a {compañero}...")
-
-    with t_tabs[2]:
-        st.header("Registrar Instalación")
-        sn_inst = st.selectbox("Seleccionar equipo de mi stock", mis_equipos['sn'].tolist() if not mis_equipos.empty else ["Sin stock"])
-        n_orden = st.text_input("Número de Orden / Incidencia")
-        if st.button("Finalizar Instalación"):
-            st.success(f"Equipo {sn_inst} instalado en orden {n_orden}")
+        st.header(f"Equipos de {user_act}")
+        if not df_inv.empty and 'ubicacion' in df_inv.columns:
+            # Filtramos por el nombre del usuario actual
+            mis_equipos = df_inv[df_inv['ubicacion'].astype(str) == str(user_act)]
+            st.dataframe(mis_equipos)
+        else:
+            st.info("No tienes material asignado o la columna 'ubicacion' falta en el Excel.")
 
 if st.sidebar.button("Cerrar Sesión"):
     del st.session_state.user
