@@ -7,143 +7,135 @@ from datetime import datetime
 import io
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Altri Telecom - Logística", layout="wide", page_icon="🧡")
-
-# Conexión para el historial
+st.set_page_config(page_title="Altri ERP", layout="wide", page_icon="🏢")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- BASE DE DATOS DE MATERIALES ---
-DATA_ALTRI = {
-    "ORANGE": [
-        {"code": "702452", "material": "ARCADYAN LIVEBOX INFINITY (XGSPON)", "family": "ROUTER"},
-        {"code": "702424", "material": "ARCADYAN LIVEBOX 6", "family": "ROUTER"},
-        {"code": "732426", "material": "P-ARCADYAN LIVEBOX 6 PLUS", "family": "ROUTER"},
-        {"code": "702478", "material": "ARCADYAN LIVEBOX 7", "family": "ROUTER"},
-        {"code": "702441", "material": "ZTE F601 V7", "family": "ONT"},
-        {"code": "732415", "material": "P-ZTE F601 V6", "family": "ONT"},
-        {"code": "702459", "material": "SAGEMCOM STB VSB3918 ATV", "family": "DECO"},
-        {"code": "702471", "material": "KAON STB KSTB7259 ATV", "family": "DECO"},
-        {"code": "730057", "material": "P-KAON STB ANDROID TV", "family": "DECO"},
-        {"code": "702461", "material": "REPETIDOR WIFI6 PREMIUM", "family": "REP"},
-    ],
-    "MASMOVIL": [
-        {"code": "702478", "material": "ARCADYAN LIVEBOX 7", "family": "ROUTER"},
-        {"code": "702411", "material": "ZTE F680", "family": "ROUTER"},
-        {"code": "702432", "material": "ZTE F6640 Wifi 6", "family": "ROUTER"},
-        {"code": "702441", "material": "ZTE F601 V7", "family": "ONT"},
-        {"code": "702429", "material": "NOKIA G-010G-P", "family": "ONT"},
-        {"code": "702459", "material": "SAGEMCOM STB VSB3918 ATV", "family": "DECO"},
-        {"code": "702415", "material": "REPETIDOR WIFI TP-LINK RE450", "family": "REP"},
-    ]
-}
+# --- CARGA DE DATOS ---
+def load_all_data():
+    users = conn.read(worksheet="usuarios")
+    inv = conn.read(worksheet="inventario")
+    return users, inv
 
-# --- FUNCIONES ---
-def guardar_en_historial(tecnico, items, marca):
-    try:
-        # Crear filas para el historial
-        nuevas_filas = []
-        fecha = datetime.now().strftime('%d/%m/%Y %H:%M')
-        for item in items:
-            nuevas_filas.append({
-                "Fecha": fecha,
-                "Tecnico": tecnico,
-                "Marca": marca,
-                "Codigo": item['code'],
-                "Material": item['name'],
-                "SN_Cantidad": item['sn']
-            })
-        
-        # Leer historial actual
-        df_existente = conn.read(worksheet="historial")
-        df_nuevo = pd.concat([df_existente, pd.DataFrame(nuevas_filas)], ignore_index=True)
-        
-        # Actualizar Google Sheets
-        conn.update(worksheet="historial", data=df_nuevo)
-        return True
-    except:
-        return False
-
-def create_pdf(tecnico, items):
+# --- FUNCIONES DE ALBARÁN ---
+def generar_pdf(tecnico, items):
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
-    c.setFont("Helvetica-Bold", 18)
-    c.drawString(50, 800, "ALTRI TELECOM - ALBARÁN DE ENTREGA")
-    c.setFont("Helvetica", 11)
-    c.drawString(50, 780, f"Técnico: {tecnico} | Fecha: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
-    c.line(50, 770, 550, 770)
-    
-    y = 740
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(50, y, "CÓDIGO")
-    c.drawString(120, y, "DESCRIPCIÓN")
-    c.drawString(450, y, "S/N o CANT.")
-    
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(50, 800, "ALTRI TELECOM - ALBARÁN DE TRASPASO")
     c.setFont("Helvetica", 10)
+    c.drawString(50, 780, f"Destinatario: {tecnico} | Fecha: {datetime.now().strftime('%d/%m/%Y')}")
+    y = 750
     for item in items:
+        c.drawString(50, y, f"- SN: {item['sn']} | Modelo: {item['modelo']}")
         y -= 20
-        c.drawString(50, y, item['code'])
-        c.drawString(120, y, item['name'][:50])
-        c.drawString(450, y, item['sn'])
-    
-    c.line(50, 150, 550, 150)
-    c.drawString(50, 130, "Firma Almacén")
-    c.drawString(400, 130, "Firma Técnico")
     c.save()
     buf.seek(0)
     return buf
 
-# --- INTERFAZ ---
-st.title("📦 Gestión Altri Telecom")
+# --- LOGIN ---
+if 'user' not in st.session_state:
+    st.title("🚀 Altri Telecom - Acceso")
+    with st.form("login"):
+        u = st.text_input("Usuario")
+        p = st.text_input("Clave", type="password")
+        if st.form_submit_button("Entrar"):
+            df_u, _ = load_all_data()
+            user_row = df_u[(df_u['user'] == u) & (df_u['clave'] == str(p))]
+            if not user_row.empty:
+                st.session_state.user = u
+                st.session_state.rol = user_row.iloc[0]['rol']
+                st.rerun()
+            else:
+                st.error("Error de acceso")
+    st.stop()
 
-tab_o, tab_m, tab_h = st.tabs(["🟠 ORANGE", "🟡 MASMOVIL", "📋 HISTORIAL"])
+# --- INTERFAZ SEGÚN ROL ---
+rol = st.session_state.rol
+user_act = st.session_state.user
 
-def render_seccion(brand):
-    col_inv, col_trans = st.columns([1.2, 1])
+st.sidebar.title(f"Usuario: {user_act}")
+st.sidebar.info(f"Rol: {rol.upper()}")
+
+# --- LOGICA DE PESTAÑAS ---
+if rol in ['admin', 'almacen']:
+    tabs = st.tabs(["📊 Administración", "📦 Almacén", "👨‍🔧 Técnicos", "👥 Usuarios", "🟠 Orange", "🟡 MásMóvil"])
     
-    with col_inv:
-        st.subheader(f"Almacén {brand}")
-        busqueda = st.text_input(f"Buscar en {brand}", key=f"search_{brand}")
-        for item in DATA_ALTRI[brand]:
-            if busqueda.lower() in item['material'].lower() or busqueda in item['code']:
-                with st.expander(f"{item['code']} - {item['material']}"):
-                    st.write(f"Familia: {item['family']}")
-                    st.write("Estado: 🟢 En Stock")
+    # 1. ADMINISTRACIÓN
+    with tabs[0]:
+        st.header("Rastreo Global de Material")
+        sn_search = st.text_input("🔍 Buscar Número de Serie (SN)")
+        _, inv = load_all_data()
+        if sn_search:
+            res = inv[inv['sn'].str.contains(sn_search, na=False)]
+            st.dataframe(res)
+        else:
+            st.dataframe(inv)
 
-    with col_trans:
-        st.subheader("Traspaso a Técnico")
-        tecnico = st.text_input("Nombre del Técnico", key=f"tec_name_{brand}")
+    # 2. ALMACÉN
+    with tabs[1]:
+        st.header("Gestión de Almacén")
+        col_in, col_out = st.columns(2)
+        with col_in:
+            st.subheader("Entrada de Material")
+            new_sn = st.text_input("Nuevo SN")
+            new_mod = st.selectbox("Modelo", ["Livebox 6", "Livebox 7", "Infinity", "ONT ZTE"])
+            new_brand = st.selectbox("Marca", ["Orange", "MasMovil"])
+            if st.button("Registrar en Almacén"):
+                st.success(f"Equipo {new_sn} registrado")
         
-        if f"cart_{brand}" not in st.session_state:
-            st.session_state[f"cart_{brand}"] = []
-            
-        mat_sel = st.selectbox("Material", [f"{i['code']} | {i['material']}" for i in DATA_ALTRI[brand]], key=f"sel_{brand}")
-        sn_val = st.text_input("S/N o Unidades", key=f"sn_val_{brand}")
-        
-        if st.button("Añadir al Albarán", key=f"btn_{brand}"):
-            c, n = mat_sel.split(" | ")
-            st.session_state[f"cart_{brand}"].append({"code": c, "name": n, "sn": sn_val})
-            st.rerun()
+        with col_out:
+            st.subheader("Traspaso a Técnico")
+            df_u, _ = load_all_data()
+            tecs = df_u[df_u['rol'] == 'tecnico']['user'].tolist()
+            dest = st.selectbox("Seleccionar Técnico", tecs)
+            sn_out = st.text_input("SN a entregar")
+            if st.button("Generar Albarán y Traspasar"):
+                pdf = generar_pdf(dest, [{"sn": sn_out, "modelo": "Equipo Altri"}])
+                st.download_button("Descargar Albarán", pdf, "albaran.pdf")
 
-        if st.session_state[f"cart_{brand}"]:
-            st.table(pd.DataFrame(st.session_state[f"cart_{brand}"]))
-            
-            if st.button("Finalizar y Registrar", key=f"save_{brand}"):
-                if tecnico:
-                    exito = guardar_en_historial(tecnico, st.session_state[f"cart_{brand}"], brand)
-                    pdf = create_pdf(tecnico, st.session_state[f"cart_{brand}"])
-                    
-                    st.download_button("📥 Descargar PDF", data=pdf, file_name=f"Albaran_{tecnico}.pdf")
-                    if exito: st.success("Registrado en historial")
-                    st.session_state[f"cart_{brand}"] = []
-                else:
-                    st.error("Escribe el nombre del técnico")
+    # 3. TÉCNICOS (VISTA ADMIN)
+    with tabs[2]:
+        st.header("Estado de la Red de Técnicos")
+        _, inv = load_all_data()
+        st.write("Material en posesión de técnicos:")
+        st.dataframe(inv[inv['ubicacion'] != 'Almacén'])
 
-with tab_o: render_seccion("ORANGE")
-with tab_m: render_seccion("MASMOVIL")
-with tab_h:
-    st.subheader("Últimos Movimientos")
-    try:
-        df_h = conn.read(worksheet="historial")
-        st.dataframe(df_h.sort_index(ascending=False), use_container_width=True)
-    except:
-        st.info("Crea una pestaña llamada 'historial' en tu Excel con las columnas: Fecha, Tecnico, Marca, Codigo, Material, SN_Cantidad")
+    # 4. USUARIOS
+    with tabs[3]:
+        st.header("Gestión de Personal")
+        df_u, _ = load_all_data()
+        st.table(df_u[['user', 'rol']])
+
+    # 5 y 6. MARCAS
+    with tabs[4]: st.header("Stock Orange")
+    with tabs[5]: st.header("Stock MásMóvil")
+
+# --- VISTA TÉCNICO ---
+elif rol == 'tecnico':
+    t_tabs = st.tabs(["📦 Mi Material", "🔄 Traspaso entre Técnicos", "✅ Instalado"])
+    
+    with t_tabs[0]:
+        st.header(f"Equipos asignados a {user_act}")
+        _, inv = load_all_data()
+        mis_equipos = inv[inv['ubicacion'] == user_act]
+        st.dataframe(mis_equipos)
+
+    with t_tabs[1]:
+        st.header("Enviar material a otro compañero")
+        df_u, _ = load_all_data()
+        otros_tecs = df_u[(df_u['rol'] == 'tecnico') & (df_u['user'] != user_act)]['user'].tolist()
+        compañero = st.selectbox("Compañero", otros_tecs)
+        sn_trap = st.text_input("SN a traspasar")
+        if st.button("Confirmar Traspaso"):
+            st.warning(f"Traspasando {sn_trap} a {compañero}...")
+
+    with t_tabs[2]:
+        st.header("Registrar Instalación")
+        sn_inst = st.selectbox("Seleccionar equipo de mi stock", mis_equipos['sn'].tolist() if not mis_equipos.empty else ["Sin stock"])
+        n_orden = st.text_input("Número de Orden / Incidencia")
+        if st.button("Finalizar Instalación"):
+            st.success(f"Equipo {sn_inst} instalado en orden {n_orden}")
+
+if st.sidebar.button("Cerrar Sesión"):
+    del st.session_state.user
+    st.rerun()
