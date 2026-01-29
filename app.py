@@ -2,71 +2,60 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
-# 1. CONFIGURACIÓN DE LA PÁGINA
-st.set_page_config(page_title="Altri Logística - Inventario", layout="wide")
+# 1. CONFIGURACIÓN
+st.set_page_config(page_title="Altri Logística", layout="wide")
 
-# 2. CONEXIÓN CON EL EXCEL
+# 2. CONEXIÓN
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
-    # Lee la pestaña 'usuarios' del Excel
     return conn.read(worksheet="usuarios")
 
-# 3. SISTEMA DE LOGIN
+# 3. ESTADO DE SESIÓN
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 
-def login():
-    st.title("🚀 Altri Telecom - Control de Inventario")
+# 4. PANTALLA DE LOGIN
+if not st.session_state['logged_in']:
+    st.title("🚀 Altri Telecom - Inventario")
     with st.form("login_form"):
-        user_input = st.text_input("Usuario")
-        pass_input = st.text_input("Contraseña", type="password")
-        submit = st.form_submit_button("Entrar")
-        
-        if submit:
+        u = st.text_input("Usuario")
+        p = st.text_input("Contraseña", type="password")
+        if st.form_submit_button("Entrar"):
             try:
-                df_users = load_data()
-                # Limpiamos espacios y convertimos a texto para comparar bien
-                df_users['user'] = df_users['user'].astype(str).str.strip()
-                df_users['clave'] = df_users['clave'].astype(str).str.strip()
+                df = load_data()
+                # Limpieza de datos para comparar
+                df['user'] = df['user'].astype(str).str.strip()
+                df['clave'] = df['clave'].astype(str).str.strip()
                 
-                user_match = df_users[(df_users['user'] == user_input) & (df_users['clave'] == str(pass_input))]
-                
-                if not user_match.empty:
+                if not df[(df['user'] == u) & (df['clave'] == p)].empty:
                     st.session_state['logged_in'] = True
-                    st.success("¡Bienvenido!")
                     st.rerun()
                 else:
-                    st.error("Usuario o contraseña incorrectos")
+                    st.error("Datos incorrectos")
             except Exception as e:
-                st.error(f"Error de conexión con Excel: {e}")
+                st.error(f"Error: {e}")
 
-# 4. INTERFAZ PRINCIPAL
-if not st.session_state['logged_in']:
-    login()
+# 5. PANTALLA PRINCIPAL
 else:
     st.sidebar.title("Menú Altri")
-    opcion = st.sidebar.radio("Ir a:", ["Panel de Control", "Inventario", "Asistente IA"])
-
-    if opcion == "Panel de Control":
-        st.header("Resumen de Stock")
-        st.write("Bienvenido al sistema de gestión de materiales de Altri Telecom.")
-        st.info("Conexión con Excel: ACTIVA ✅")
+    menu = st.sidebar.radio("Ir a:", ["Stock", "Inventario", "IA"])
+    
+    if menu == "Stock":
+        st.header("📦 Panel de Stock")
+        st.write("Bienvenido al control de almacén.")
         
-    elif opcion == "Inventario":
-        st.header("Gestión de Equipos")
-        st.write("Cargando base de datos de materiales...")
-        # Aquí puedes añadir un botón para ver los datos del Excel
-        if st.button("Ver lista de usuarios"):
+    elif menu == "Inventario":
+        st.header("📋 Gestión de Equipos")
+        if st.button("Actualizar datos"):
             st.dataframe(load_data())
 
-    elif opcion == "Asistente IA":
-        st.header("Asistente Inteligente Gemini")
-        pregunta = st.text_input("Haz una consulta sobre el stock:")
-        if pregunta:
-            st.info("La IA está analizando tu inventario...")
-            st.write("Pronto integraremos las respuestas detalladas aquí.")
+    elif menu == "IA":
+        st.header("🤖 Asistente Gemini")
+        q = st.text_input("Consulta a la IA:")
+        if q:
+            st.info("Procesando consulta...")
 
-    if st.sidebar.button("Cerrar Sesión"):
+    if st.sidebar.button("Salir"):
         st.session_state['logged_in'] = False
         st.rerun()
