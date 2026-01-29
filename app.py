@@ -2,17 +2,17 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
-# Configuración de la página
+# 1. CONFIGURACIÓN DE LA PÁGINA
 st.set_page_config(page_title="Altri Logística - Inventario", layout="wide")
 
-# 1. CONEXIÓN CON EL EXCEL
+# 2. CONEXIÓN CON EL EXCEL
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
     # Lee la pestaña 'usuarios' del Excel
     return conn.read(worksheet="usuarios")
 
-# 2. SISTEMA DE LOGIN
+# 3. SISTEMA DE LOGIN
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 
@@ -26,8 +26,11 @@ def login():
         if submit:
             try:
                 df_users = load_data()
-                # Verifica si el usuario y clave coinciden en el Excel
-                user_match = df_users[(df_users['user'] == user_input) & (df_users['clave'].astype(str) == str(pass_input))]
+                # Limpiamos espacios y convertimos a texto para comparar bien
+                df_users['user'] = df_users['user'].astype(str).str.strip()
+                df_users['clave'] = df_users['clave'].astype(str).str.strip()
+                
+                user_match = df_users[(df_users['user'] == user_input) & (df_users['clave'] == str(pass_input))]
                 
                 if not user_match.empty:
                     st.session_state['logged_in'] = True
@@ -36,9 +39,9 @@ def login():
                 else:
                     st.error("Usuario o contraseña incorrectos")
             except Exception as e:
-                st.error(f"Error de conexión: {e}")
+                st.error(f"Error de conexión con Excel: {e}")
 
-# 3. INTERFAZ PRINCIPAL
+# 4. INTERFAZ PRINCIPAL
 if not st.session_state['logged_in']:
     login()
 else:
@@ -48,17 +51,21 @@ else:
     if opcion == "Panel de Control":
         st.header("Resumen de Stock")
         st.write("Bienvenido al sistema de gestión de materiales de Altri Telecom.")
+        st.info("Conexión con Excel: ACTIVA ✅")
         
     elif opcion == "Inventario":
         st.header("Gestión de Equipos")
-        st.info("Aquí podrás registrar entradas y salidas de routers.")
+        st.write("Cargando base de datos de materiales...")
+        # Aquí puedes añadir un botón para ver los datos del Excel
+        if st.button("Ver lista de usuarios"):
+            st.dataframe(load_data())
 
     elif opcion == "Asistente IA":
         st.header("Asistente Inteligente Gemini")
         pregunta = st.text_input("Haz una consulta sobre el stock:")
         if pregunta:
-            st.info("La IA está consultando el Excel...")
-            st.write("Respuesta: Conexión establecida correctamente con la base de datos.")
+            st.info("La IA está analizando tu inventario...")
+            st.write("Pronto integraremos las respuestas detalladas aquí.")
 
     if st.sidebar.button("Cerrar Sesión"):
         st.session_state['logged_in'] = False
