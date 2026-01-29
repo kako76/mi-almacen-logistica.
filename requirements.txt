@@ -1,4 +1,4 @@
 streamlit
 pandas
 reportlab
-google-generativeai
+st-gsheets-connection
